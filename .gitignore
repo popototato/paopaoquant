@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.Python
+.venv/
+venv/
+.env
+*.log
+download.log
+eth.csv
+live_okx*.csv
+*.csv
+.DS_Store
