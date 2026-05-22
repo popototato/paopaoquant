@@ -255,7 +255,20 @@ def _count_csv_rows(csv_path: Path) -> int:
         return max(0, sum(1 for _ in file) - 1)
 
 
-def get_csv_info() -> dict | None:
+def _estimate_csv_rows(csv_path: Path) -> int:
+    """按首行长度估算行数，避免首页扫描超大 eth.csv。"""
+    stat = csv_path.stat()
+    with csv_path.open("rb") as file:
+        header = file.readline()
+        sample = file.readline()
+    if not sample:
+        return 0
+    avg_line = max(len(sample), 1)
+    body_bytes = max(0, stat.st_size - len(header))
+    return max(1, body_bytes // avg_line)
+
+
+def get_csv_info(*, count_rows: bool = True) -> dict | None:
     global _csv_info_cache, _csv_info_cache_key
     if not ETH_CSV_PATH.exists():
         _csv_info_cache = None
@@ -263,7 +276,7 @@ def get_csv_info() -> dict | None:
         return None
 
     stat = ETH_CSV_PATH.stat()
-    cache_key = (stat.st_mtime_ns, stat.st_size)
+    cache_key = (stat.st_mtime_ns, stat.st_size, count_rows)
     if _csv_info_cache_key == cache_key and _csv_info_cache is not None:
         return _csv_info_cache
 
@@ -282,7 +295,11 @@ def get_csv_info() -> dict | None:
         return None
 
     interval = _detect_interval_label(ETH_CSV_PATH)
-    count = _count_csv_rows(ETH_CSV_PATH)
+    count = (
+        _count_csv_rows(ETH_CSV_PATH)
+        if count_rows
+        else _estimate_csv_rows(ETH_CSV_PATH)
+    )
     updated_at = datetime.fromtimestamp(stat.st_mtime, tz=BEIJING_TZ).strftime(
         "%Y-%m-%d %H:%M:%S"
     )
@@ -292,6 +309,7 @@ def get_csv_info() -> dict | None:
         "path": str(ETH_CSV_PATH.resolve()),
         "interval": interval,
         "count": count,
+        "count_estimated": not count_rows,
         "start": first_dt,
         "end": last_dt,
         "start_date": start_date,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 import json
-import re
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -220,85 +219,25 @@ def render_eth_candlestick_chart(
     st.html(html, width="stretch")
 
 
-def _inline_trading_panel_assets(html: str, panel_dir: Path) -> str:
-    """将 Vite 构建产物中的 JS/CSS 内联（仅作 static 服务不可用时的回退）。"""
-    for match in re.finditer(
-        r'<script[^>]+src="([^"]+\.js)"[^>]*></script>', html
-    ):
-        rel = match.group(1).lstrip("./")
-        script_path = panel_dir / rel
-        if script_path.is_file():
-            js = script_path.read_text(encoding="utf-8")
-            html = html.replace(
-                match.group(0),
-                f"<script type=\"module\">\n{js}\n</script>",
-            )
-    for match in re.finditer(
-        r'<link[^>]+href="([^"]+\.css)"[^>]*/?>', html
-    ):
-        rel = match.group(1).lstrip("./")
-        css_path = panel_dir / rel
-        if css_path.is_file():
-            css = css_path.read_text(encoding="utf-8")
-            html = html.replace(
-                match.group(0),
-                f"<style>\n{css}\n</style>",
-            )
-    return html
-
-
-_TRADING_PANEL_VIEWPORT_CSS = """
-<style>
-html, body, #root {
-  width: 100%;
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-  background: #131722;
-}
-</style>
-"""
-
 # Default iframe height (px); browser loads JS via /app/static/ — no server-side inline
 _DEFAULT_TRADING_PANEL_HEIGHT = 1600
 
 
-def _trading_panel_build_signature() -> str:
-    """构建产物变更时使缓存失效。"""
-    if not TRADING_PANEL_INDEX.is_file():
-        return "missing"
-    parts = [str(TRADING_PANEL_INDEX.stat().st_mtime_ns)]
-    assets_dir = TRADING_PANEL_DIR / "assets"
-    if assets_dir.is_dir():
-        for path in sorted(assets_dir.iterdir()):
-            if path.is_file():
-                parts.append(f"{path.name}:{path.stat().st_mtime_ns}")
-    return "|".join(parts)
-
-
-@st.cache_data(show_spinner=False)
-def _build_trading_panel_html_inline(signature: str) -> str:
-    """回退：内联 JS/CSS（仅在无法走 static URL 时使用）。"""
-    del signature  # 仅用于 cache key
-    html = TRADING_PANEL_INDEX.read_text(encoding="utf-8")
-    html = _TRADING_PANEL_VIEWPORT_CSS + html
-    return _inline_trading_panel_assets(html, TRADING_PANEL_DIR)
-
-
 def render_trading_panel(*, height: int | None = None) -> None:
-    """嵌入 React 交易面板（需先 `cd frontend && npm run build`）。"""
+    """嵌入 React 交易面板（需先 `cd frontend && npm run build`）。
+
+    仅使用 ``st.iframe`` + ``/app/static/``（``enableStaticServing``），
+    不在 Python 侧内联 JS，避免 Cloud 首屏 keepalive 超时。
+    """
     panel_height = height if height is not None else _DEFAULT_TRADING_PANEL_HEIGHT
 
     if not TRADING_PANEL_INDEX.is_file():
-        st.html(
-            "<p style='font-family:sans-serif;color:#131722;padding:16px'>"
-            "交易面板尚未构建。请在项目根目录执行：<br>"
-            "<code>cd frontend && npm install && npm run build</code>"
-            "</p>",
+        st.warning(
+            "交易面板尚未构建。请在项目根目录执行："
+            "`cd frontend && npm install && npm run build`"
         )
         return
 
-    # 优先通过 static 服务加载，避免每次 rerun 同步读取并内联 ~450KB JS
     st.iframe(
         TRADING_PANEL_STATIC_URL,
         width="stretch",
