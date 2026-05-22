@@ -1,7 +1,33 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "installCommand": "cd frontend && npm install",
+  "installCommand": "cd frontend && npm ci",
   "buildCommand": "npm run build",
-  "outputDirectory": "static/trading_panel"
+  "outputDirectory": "public",
+  "headers": [
+    {
+      "source": "/panel.bundle.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/panel.bundle.css",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/trading",
+      "destination": "/index.html"
+    }
+  ]
 }

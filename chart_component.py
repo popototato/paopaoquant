@@ -281,10 +281,18 @@ def _trading_panel_srcdoc() -> str:
     html = TRADING_PANEL_INDEX_HTML.read_text(encoding="utf-8")
     base = TRADING_PANEL_STATIC_BASE
     if f'href="{base}' not in html:
-        html = (
-            html.replace('href="panel.bundle.css"', f'href="{base}panel.bundle.css"')
-            .replace('src="panel.bundle.js"', f'src="{base}panel.bundle.js"')
-        )
+        for rel in (
+            "./panel.bundle.css",
+            "panel.bundle.css",
+            "/panel.bundle.css",
+        ):
+            html = html.replace(f'href="{rel}"', f'href="{base}panel.bundle.css"')
+        for rel in (
+            "./panel.bundle.js",
+            "panel.bundle.js",
+            "/panel.bundle.js",
+        ):
+            html = html.replace(f'src="{rel}"', f'src="{base}panel.bundle.js"')
     return html
 
 
