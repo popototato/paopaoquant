@@ -2,3 +2,4 @@ streamlit>=1.28.0
 backtrader>=1.9.78.123
 pandas>=2.0.0
 requests>=2.31.0
+altair>=5.0.0
