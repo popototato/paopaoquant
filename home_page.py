@@ -37,11 +37,16 @@ else:
         "请通过顶部导航进入 **有限层级均值回归网格策略回测** 下载行情。"
     )
 
+panel_url = _trading_panel_iframe_src()
+st.markdown(
+    f"**面板静态页测试**（Streamlit 运行中可点）：[打开交易面板]({panel_url})"
+)
+
 panel_issues = _trading_panel_static_diagnostics()
 if panel_issues:
     st.error("首页图表依赖的静态交易面板未就绪：" + "；".join(panel_issues))
     st.caption(
-        f"部署后请确认可访问：`{_trading_panel_iframe_src()}` "
+        f"部署后请确认可访问：`{panel_url}` "
         f"（路径 `{TRADING_PANEL_STATIC_PATH}`）。"
         "本地修复：`cd frontend && npm run build`，然后提交 `static/trading_panel/`。"
     )

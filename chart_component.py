@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import csv
 import json
+import os
+import re
 from collections import deque
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urljoin
 from zoneinfo import ZoneInfo
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from data import ETH_CSV_PATH, beijing_str_to_ms
 
@@ -224,12 +228,75 @@ def render_eth_candlestick_chart(
 _DEFAULT_TRADING_PANEL_HEIGHT = 1600
 
 
-def _trading_panel_iframe_src() -> str:
-    """Cloud 上 iframe 需要绝对 URL；本地回退相对 static 路径。"""
+def _streamlit_local_origin() -> str:
+    """When ``st.context.url`` is missing, build origin from Streamlit server config."""
+    try:
+        from streamlit.config import get_option
+
+        port = int(get_option("server.port"))
+        address = str(get_option("server.address") or "localhost")
+        if address in ("0.0.0.0", "::", ""):
+            address = "localhost"
+        elif address == "::1":
+            address = "localhost"
+        return f"http://{address}:{port}"
+    except Exception:
+        return "http://localhost:8501"
+
+
+def _trading_panel_origin() -> str:
     base_url = getattr(st.context, "url", None)
     if base_url and base_url.startswith(("http://", "https://")):
-        return f"{base_url.rstrip('/')}{TRADING_PANEL_STATIC_PATH}"
-    return TRADING_PANEL_STATIC_PATH
+        return base_url.rstrip("/")
+    return _streamlit_local_origin().rstrip("/")
+
+
+def _trading_panel_iframe_src() -> str:
+    """Always return an absolute URL — relative ``/app/static/`` breaks ``st.iframe``."""
+    return f"{_trading_panel_origin()}{TRADING_PANEL_STATIC_PATH}"
+
+
+def _absolute_static_asset_url(path: str, *, origin: str | None = None) -> str:
+    if path.startswith(("http://", "https://")):
+        return path
+    base = (origin or _trading_panel_origin()).rstrip("/")
+    if path.startswith("/"):
+        return f"{base}{path}"
+    return urljoin(f"{base}/", path.lstrip("./"))
+
+
+def _trading_panel_embed_html(*, origin: str | None = None) -> str:
+    """Inject built panel CSS/JS into ``#paopao-trading-panel`` when iframe cannot load."""
+    html = TRADING_PANEL_INDEX.read_text(encoding="utf-8")
+    base = origin or _trading_panel_origin()
+    chunks: list[str] = [
+        '<div id="paopao-trading-panel" style="width:100%;min-height:1200px;"></div>'
+    ]
+    for tag in re.findall(r"<link[^>]+>", html, flags=re.I):
+        if "stylesheet" not in tag.lower():
+            continue
+        m = re.search(r'href=["\']([^"\']+)["\']', tag, flags=re.I)
+        if not m:
+            continue
+        abs_href = _absolute_static_asset_url(m.group(1), origin=base)
+        chunks.append(f'<link rel="stylesheet" crossorigin href="{abs_href}">')
+    for tag in re.findall(r'<script[^>]+src=["\'][^"\']+["\'][^>]*>', html, flags=re.I):
+        m = re.search(r'src=["\']([^"\']+)["\']', tag, flags=re.I)
+        if not m:
+            continue
+        abs_src = _absolute_static_asset_url(m.group(1), origin=base)
+        chunks.append(
+            f'<script type="module" crossorigin src="{abs_src}"></script>'
+        )
+    return "\n".join(chunks)
+
+
+def _use_trading_panel_embed() -> bool:
+    if os.environ.get("PAOPAO_TRADING_PANEL_EMBED", "").strip() in ("1", "true", "yes"):
+        return True
+    if st.session_state.get("_paopao_trading_panel_embed"):
+        return True
+    return st.query_params.get("panel_embed", "") == "1"
 
 
 def _trading_panel_static_diagnostics() -> list[str]:
@@ -268,11 +335,28 @@ def _trading_panel_static_diagnostics() -> list[str]:
     return issues
 
 
+def _render_trading_panel_iframe(panel_url: str, panel_height: int) -> None:
+    """Prefer ``st.iframe``; fall back to ``components.v1.iframe`` on failure."""
+    try:
+        st.iframe(
+            panel_url,
+            width="stretch",
+            height=panel_height,
+        )
+    except Exception:
+        components.iframe(
+            src=panel_url,
+            width=None,
+            height=panel_height,
+            scrolling=True,
+        )
+
+
 def render_trading_panel(*, height: int | None = None) -> None:
     """嵌入 React 交易面板（需先 `cd frontend && npm run build`）。
 
-    仅使用 ``st.iframe`` + ``/app/static/``（``enableStaticServing``），
-    不在 Python 侧内联 JS，避免 Cloud 首屏 keepalive 超时。
+    Uses absolute ``/app/static/`` URLs (``enableStaticServing``). Falls back to
+    inline embed in ``#paopao-trading-panel`` when iframe mode is unavailable.
     """
     panel_height = height if height is not None else _DEFAULT_TRADING_PANEL_HEIGHT
 
@@ -286,9 +370,18 @@ def render_trading_panel(*, height: int | None = None) -> None:
         st.code("cd frontend && npm install && npm run build", language="bash")
         return
 
-    st.iframe(
-        panel_url,
-        width="stretch",
-        height=panel_height,
-    )
+    if _use_trading_panel_embed():
+        st.html(_trading_panel_embed_html(), width="stretch")
+        return
+
+    _render_trading_panel_iframe(panel_url, panel_height)
+
+    with st.expander("图表区域空白？"):
+        st.caption(
+            f"先在新标签页打开 [静态面板]({panel_url}) 确认资源可访问。"
+            "若静态页正常但 iframe 空白，可改用内联嵌入（避开 Streamlit #root 冲突）。"
+        )
+        if st.button("改用内联嵌入模式", key="paopao_panel_embed_btn"):
+            st.session_state["_paopao_trading_panel_embed"] = True
+            st.rerun()
 
