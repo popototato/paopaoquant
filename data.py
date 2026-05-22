@@ -7,7 +7,11 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
+BINANCE_KLINES_URLS = (
+    "https://api.binance.com/api/v3/klines",
+    "https://data-api.binance.vision/api/v3/klines",
+)
+_BINANCE_GEO_BLOCK_CODES = frozenset({403, 451})
 KLINE_INTERVAL = "1m"
 ETH_CSV_PATH = Path(__file__).parent / "eth.csv"
 _csv_info_cache: dict | None = None
@@ -122,6 +126,34 @@ def _remove_legacy_files() -> None:
         legacy.unlink()
 
 
+class BinanceKlinesError(Exception):
+    """Binance K 线接口全部不可用。"""
+
+
+def _request_klines(
+    session: requests.Session,
+    params: dict,
+    url_index: int = 0,
+) -> tuple[requests.Response, int]:
+    """依次尝试主站与 data-api；451/403 时切换备用端点。"""
+    last_status: int | None = None
+    for idx in range(url_index, len(BINANCE_KLINES_URLS)):
+        response = session.get(BINANCE_KLINES_URLS[idx], params=params, timeout=30)
+        if response.status_code == 429:
+            return response, idx
+        if response.status_code in _BINANCE_GEO_BLOCK_CODES:
+            last_status = response.status_code
+            continue
+        if response.ok:
+            return response, idx
+        response.raise_for_status()
+    raise BinanceKlinesError(
+        "无法从 Binance 拉取 K 线数据：主站与 data-api.binance.vision 均不可用"
+        + (f"（最近 HTTP {last_status}，常见于 Streamlit Cloud 等地区限制）" if last_status else "")
+        + "。请稍后重试，或在本地网络下载 eth.csv 后上传。"
+    )
+
+
 def _fetch_klines_since(
     start_ms: int,
     progress_callback: ProgressCallback | None = None,
@@ -131,22 +163,22 @@ def _fetch_klines_since(
     current = start_ms
     fetched: dict[str, list] = {}
     session = requests.Session()
+    url_index = 0
+    params_base = {
+        "symbol": "ETHUSDT",
+        "interval": KLINE_INTERVAL,
+        "limit": MAX_LIMIT,
+    }
 
     while current < now_ms:
-        response = session.get(
-            BINANCE_KLINES_URL,
-            params={
-                "symbol": "ETHUSDT",
-                "interval": KLINE_INTERVAL,
-                "limit": MAX_LIMIT,
-                "startTime": current,
-            },
-            timeout=30,
-        )
+        params = {**params_base, "startTime": current}
+        try:
+            response, url_index = _request_klines(session, params, url_index)
+        except BinanceKlinesError:
+            raise
         if response.status_code == 429:
             time.sleep(1.5)
             continue
-        response.raise_for_status()
         batch = response.json()
         if not batch:
             break
