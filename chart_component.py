@@ -11,13 +11,14 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from data import ETH_CSV_PATH, beijing_str_to_ms
 
 TRADING_PANEL_DIR = Path(__file__).resolve().parent / "static" / "trading_panel"
 TRADING_PANEL_BUNDLE_JS = TRADING_PANEL_DIR / "panel.bundle.js"
 TRADING_PANEL_BUNDLE_CSS = TRADING_PANEL_DIR / "panel.bundle.css"
+TRADING_PANEL_INDEX_HTML = TRADING_PANEL_DIR / "index.html"
+TRADING_PANEL_STATIC_URL = "/app/static/trading_panel/index.html"
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 LIGHTWEIGHT_CHARTS_CDN = (
@@ -263,64 +264,34 @@ def trading_panel_bundle_diagnostics() -> list[str]:
         issues.append(
             f"缺少 `{TRADING_PANEL_BUNDLE_CSS.name}`（Vite 需 `cssCodeSplit: false`）。"
         )
+    if not TRADING_PANEL_INDEX_HTML.is_file():
+        issues.append(
+            f"缺少 `{TRADING_PANEL_INDEX_HTML.name}`（`npm run build` 会通过 postbuild 生成）。"
+        )
     return issues
-
-
-@st.cache_data(show_spinner=False)
-def _cached_inline_panel_html_v2(min_height: int = _DEFAULT_TRADING_PANEL_HEIGHT) -> str:
-    """Read built IIFE bundle once per session; inline CSS+JS for ``components.html``."""
-    js_path, css_path = _resolve_panel_bundle_paths()
-    js_text = js_path.read_text(encoding="utf-8")
-    css_text = css_path.read_text(encoding="utf-8") if css_path.is_file() else ""
-    safe_css = css_text.replace("</style>", r"<\/style>")
-    safe_js = js_text.replace("</script>", r"<\/script>")
-    parts: list[str] = []
-    if safe_css.strip():
-        parts.append(f"<style>{safe_css}</style>")
-    parts.append(
-        f'<div id="paopao-trading-panel" style="width:100%;min-height:{min_height}px;"></div>'
-    )
-    parts.append(f"<script>{safe_js}</script>")
-    return "\n".join(parts)
 
 
 def _is_paopao_dev() -> bool:
     return os.environ.get("PAOPAO_DEV", "").strip().lower() in ("1", "true", "yes")
 
 
-def _use_trading_panel_iframe() -> bool:
-    """Opt-in sandbox iframe; default is ``components.html`` inline embed."""
-    return os.environ.get("PAOPAO_TRADING_PANEL_IFRAME", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-
-
-def _render_trading_panel_inline(*, panel_height: int) -> None:
+def _render_trading_panel_static(*, panel_height: int) -> None:
+    """Load IIFE bundle via ``st.iframe`` + ``enableStaticServing`` (local + Cloud)."""
     if _is_paopao_dev():
-        st.caption("交易面板已加载（内联模式）")
-    components.html(
-        _cached_inline_panel_html_v2(min_height=panel_height),
+        st.caption(f"交易面板已加载（`{TRADING_PANEL_STATIC_URL}`）")
+    st.iframe(
+        TRADING_PANEL_STATIC_URL,
+        width="stretch",
         height=panel_height,
-        scrolling=True,
-    )
-
-
-def _render_trading_panel_iframe(*, panel_height: int) -> None:
-    """Same inline HTML inside a component iframe (env ``PAOPAO_TRADING_PANEL_IFRAME=1``)."""
-    components.html(
-        _cached_inline_panel_html_v2(min_height=panel_height),
-        height=panel_height,
-        scrolling=True,
     )
 
 
 def render_trading_panel(*, height: int | None = None) -> None:
     """嵌入 React 交易面板（需先 `cd frontend && npm run build`）。
 
-    Default: IIFE ``panel.bundle.js`` + CSS inlined via ``components.html`` (scripts run).
-    Optional: env ``PAOPAO_TRADING_PANEL_IFRAME=1`` for component iframe sandbox.
+    Serves ``static/trading_panel/index.html`` via ``st.iframe`` and Streamlit static
+    hosting (``.streamlit/config.toml`` → ``enableStaticServing = true``). Avoids
+    inlining ~800KB JS into ``components.html`` srcdoc, which often renders blank.
     """
     panel_height = height if height is not None else _DEFAULT_TRADING_PANEL_HEIGHT
     issues = trading_panel_bundle_diagnostics()
@@ -329,9 +300,5 @@ def render_trading_panel(*, height: int | None = None) -> None:
         st.code("cd frontend && npm install && npm run build", language="bash")
         return
 
-    if _use_trading_panel_iframe():
-        _render_trading_panel_iframe(panel_height=panel_height)
-        return
-
-    _render_trading_panel_inline(panel_height=panel_height)
+    _render_trading_panel_static(panel_height=panel_height)
 

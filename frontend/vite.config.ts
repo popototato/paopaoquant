@@ -10,6 +10,9 @@ export default defineConfig(({ mode }) => {
   if (mode === "production") {
     return {
       plugins: [react()],
+      define: {
+        "process.env.NODE_ENV": JSON.stringify("production"),
+      },
       build: {
         lib: {
           entry: path.resolve(__dirname, "src/main.tsx"),

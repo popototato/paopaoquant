@@ -482,7 +482,7 @@ export default function TradingPanel() {
       window.removeEventListener("resize", applyChartSize);
       destroyCharts();
     };
-  }, [loading, symbol, interval, destroyCharts]);
+  }, [loading, candles.length, symbol, interval, destroyCharts]);
 
   useEffect(() => {
     if (!bundleRef.current || !candles.length || loading) return;
