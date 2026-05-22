@@ -3,8 +3,7 @@ import streamlit as st
 from chart_component import render_trading_panel
 from data import ETH_CSV_PATH, get_csv_info
 
-render_trading_panel()
-
+# 轻量元数据先渲染，避免在重 iframe 之后才显示 caption
 meta = get_csv_info()
 
 st.markdown(
@@ -30,3 +29,5 @@ else:
         f"暂无本地 1m 数据（`{ETH_CSV_PATH.name}`）。"
         "请通过顶部导航进入 **有限层级均值回归网格策略回测** 下载行情。"
     )
+
+render_trading_panel()

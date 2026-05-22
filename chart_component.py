@@ -1,21 +1,21 @@
-"""TradingView Lightweight Charts 嵌入组件（Streamlit html）。"""
+"""TradingView Lightweight Charts 嵌入组件（Streamlit iframe）。"""
 
 from __future__ import annotations
 
 import csv
 import json
-import re
 from collections import deque
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import streamlit.components.v1 as components
+import streamlit as st
 
 from data import ETH_CSV_PATH, beijing_str_to_ms
 
 TRADING_PANEL_DIR = Path(__file__).resolve().parent / "static" / "trading_panel"
 TRADING_PANEL_INDEX = TRADING_PANEL_DIR / "index.html"
+TRADING_PANEL_STATIC_URL = "/app/static/trading_panel/index.html"
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 LIGHTWEIGHT_CHARTS_CDN = (
@@ -216,79 +216,11 @@ def render_eth_candlestick_chart(
 </body>
 </html>"""
 
-    components.html(html, height=height, scrolling=False)
+    st.iframe(html, width="stretch", height=height)
 
 
-def _inline_trading_panel_assets(html: str, panel_dir: Path) -> str:
-    """将 Vite 构建产物中的 JS/CSS 内联，便于 Streamlit components.html 加载。"""
-    for match in re.finditer(
-        r'<script[^>]+src="([^"]+\.js)"[^>]*></script>', html
-    ):
-        rel = match.group(1).lstrip("./")
-        script_path = panel_dir / rel
-        if script_path.is_file():
-            js = script_path.read_text(encoding="utf-8")
-            html = html.replace(
-                match.group(0),
-                f"<script type=\"module\">\n{js}\n</script>",
-            )
-    for match in re.finditer(
-        r'<link[^>]+href="([^"]+\.css)"[^>]*/?>', html
-    ):
-        rel = match.group(1).lstrip("./")
-        css_path = panel_dir / rel
-        if css_path.is_file():
-            css = css_path.read_text(encoding="utf-8")
-            html = html.replace(
-                match.group(0),
-                f"<style>\n{css}\n</style>",
-            )
-    return html
-
-
-_TRADING_PANEL_VIEWPORT_CSS = """
-<style>
-html, body, #root {
-  width: 100%;
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-  background: #131722;
-}
-</style>
-"""
-
-_TRADING_PANEL_RESIZE_JS = """
-<script>
-(function() {
-  function reportHeight() {
-    var root = document.getElementById("root") || document.body;
-    var h = Math.max(
-      root.scrollHeight,
-      root.offsetHeight,
-      document.documentElement.scrollHeight,
-      document.body.scrollHeight
-    );
-    window.parent.postMessage({
-      type: "streamlit:setFrameHeight",
-      height: Math.max(h, 800)
-    }, "*");
-  }
-  if (typeof ResizeObserver !== "undefined") {
-    new ResizeObserver(function() { reportHeight(); }).observe(document.body);
-  }
-  window.addEventListener("load", reportHeight);
-  window.addEventListener("resize", reportHeight);
-  document.addEventListener("DOMContentLoaded", reportHeight);
-  [100, 500, 1500, 3000].forEach(function(ms) {
-    setTimeout(reportHeight, ms);
-  });
-})();
-</script>
-"""
-
-# Streamlit iframe initial height (px); postMessage resize adjusts after load
-_DEFAULT_TRADING_PANEL_HEIGHT = 2600
+# Default iframe height (px); browser loads JS via /app/static/ — no server-side inline
+_DEFAULT_TRADING_PANEL_HEIGHT = 1600
 
 
 def render_trading_panel(*, height: int | None = None) -> None:
@@ -296,21 +228,20 @@ def render_trading_panel(*, height: int | None = None) -> None:
     panel_height = height if height is not None else _DEFAULT_TRADING_PANEL_HEIGHT
 
     if not TRADING_PANEL_INDEX.is_file():
-        components.html(
+        st.iframe(
             "<p style='font-family:sans-serif;color:#131722;padding:16px'>"
             "交易面板尚未构建。请在项目根目录执行：<br>"
             "<code>cd frontend && npm install && npm run build</code>"
             "</p>",
+            width="stretch",
             height=120,
-            scrolling=False,
         )
         return
 
-    html = TRADING_PANEL_INDEX.read_text(encoding="utf-8")
-    html = _TRADING_PANEL_VIEWPORT_CSS + html
-    html = _inline_trading_panel_assets(html, TRADING_PANEL_DIR)
-    if "</body>" in html:
-        html = html.replace("</body>", _TRADING_PANEL_RESIZE_JS + "\n</body>", 1)
-    else:
-        html += _TRADING_PANEL_RESIZE_JS
-    components.html(html, height=panel_height, scrolling=True)
+    # 优先通过 static 服务加载，避免每次 rerun 同步读取并内联 ~450KB JS
+    st.iframe(
+        TRADING_PANEL_STATIC_URL,
+        width="stretch",
+        height=panel_height,
+    )
+

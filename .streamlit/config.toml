@@ -1,3 +1,7 @@
+# Serve built trading panel from ./static/ (avoids inlining ~450KB JS per rerun).
+[server]
+enableStaticServing = true
+
 # Force dark theme app-wide (home + backtest) — avoids OS/light Streamlit defaults.
 # Palette aligned with app.py / backtest_page.py (#131722 / #1e222d).
 [theme]
