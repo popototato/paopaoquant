@@ -15,6 +15,7 @@ from data import ETH_CSV_PATH, beijing_str_to_ms
 
 TRADING_PANEL_DIR = Path(__file__).resolve().parent / "static" / "trading_panel"
 TRADING_PANEL_INDEX = TRADING_PANEL_DIR / "index.html"
+TRADING_PANEL_ASSETS_DIR = TRADING_PANEL_DIR / "assets"
 TRADING_PANEL_STATIC_PATH = "/app/static/trading_panel/index.html"
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
@@ -231,6 +232,42 @@ def _trading_panel_iframe_src() -> str:
     return TRADING_PANEL_STATIC_PATH
 
 
+def _trading_panel_static_diagnostics() -> list[str]:
+    """Return human-readable issues when the built panel is missing or mis-linked."""
+    issues: list[str] = []
+    if not TRADING_PANEL_INDEX.is_file():
+        issues.append(
+            f"缺少 `{TRADING_PANEL_INDEX.relative_to(TRADING_PANEL_DIR.parent.parent)}`"
+        )
+        return issues
+
+    html = TRADING_PANEL_INDEX.read_text(encoding="utf-8")
+    if 'src="./assets/' in html or 'href="./assets/' in html:
+        issues.append(
+            "index.html 仍使用相对路径 `./assets/`。"
+            "请在 `frontend` 目录执行 `npm run build`（生产 base 应为 `/app/static/trading_panel/`）。"
+        )
+
+    if not TRADING_PANEL_ASSETS_DIR.is_dir():
+        issues.append(f"缺少 assets 目录：`{TRADING_PANEL_ASSETS_DIR.name}/`")
+        return issues
+
+    asset_names = {p.name for p in TRADING_PANEL_ASSETS_DIR.iterdir() if p.is_file()}
+    for attr, prefix in (("src", "src="), ("href", "href=")):
+        marker = f'{attr}="/app/static/trading_panel/assets/'
+        if marker not in html and f'{attr}="./assets/' not in html:
+            continue
+        # Extract referenced bundle names from index.html
+        for part in html.split(prefix)[1:]:
+            if "/assets/" not in part:
+                continue
+            name = part.split("/assets/", 1)[1].split('"', 1)[0].strip()
+            if name and name not in asset_names:
+                issues.append(f"index.html 引用的资源不存在：`assets/{name}`")
+
+    return issues
+
+
 def render_trading_panel(*, height: int | None = None) -> None:
     """嵌入 React 交易面板（需先 `cd frontend && npm run build`）。
 
@@ -239,15 +276,18 @@ def render_trading_panel(*, height: int | None = None) -> None:
     """
     panel_height = height if height is not None else _DEFAULT_TRADING_PANEL_HEIGHT
 
-    if not TRADING_PANEL_INDEX.is_file():
-        st.warning(
-            "交易面板尚未构建。请在项目根目录执行："
-            "`cd frontend && npm install && npm run build`"
+    panel_url = _trading_panel_iframe_src()
+    issues = _trading_panel_static_diagnostics()
+    if issues:
+        st.error("交易面板静态资源异常，图表无法加载：\n\n" + "\n".join(f"- {x}" for x in issues))
+        st.markdown(
+            f"构建后应可通过 [静态面板]({panel_url}) 直接打开（需已部署且 `enableStaticServing = true`）。"
         )
+        st.code("cd frontend && npm install && npm run build", language="bash")
         return
 
     st.iframe(
-        _trading_panel_iframe_src(),
+        panel_url,
         width="stretch",
         height=panel_height,
     )
