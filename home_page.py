@@ -4,6 +4,7 @@ from chart_component import (
     TRADING_PANEL_STATIC_PATH,
     _trading_panel_iframe_src,
     _trading_panel_static_diagnostics,
+    _trading_panel_static_test_url,
     render_trading_panel,
 )
 from data import ETH_CSV_PATH, get_csv_info
@@ -38,8 +39,10 @@ else:
     )
 
 panel_url = _trading_panel_iframe_src()
+static_test_url = _trading_panel_static_test_url()
 st.markdown(
-    f"**面板静态页测试**（Streamlit 运行中可点）：[打开交易面板]({panel_url})"
+    f"**静态服务自检**（需 `.streamlit/config.toml` 中 `enableStaticServing = true`）："
+    f"[test.txt]({static_test_url}) · [交易面板 index]({panel_url})"
 )
 
 panel_issues = _trading_panel_static_diagnostics()

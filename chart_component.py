@@ -21,6 +21,8 @@ TRADING_PANEL_DIR = Path(__file__).resolve().parent / "static" / "trading_panel"
 TRADING_PANEL_INDEX = TRADING_PANEL_DIR / "index.html"
 TRADING_PANEL_ASSETS_DIR = TRADING_PANEL_DIR / "assets"
 TRADING_PANEL_STATIC_PATH = "/app/static/trading_panel/index.html"
+TRADING_PANEL_STATIC_TEST_PATH = "/app/static/test.txt"
+TRADING_PANEL_STATIC_TEST_MARKER = "STATIC_TEST_OK"
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 LIGHTWEIGHT_CHARTS_CDN = (
@@ -265,13 +267,11 @@ def _absolute_static_asset_url(path: str, *, origin: str | None = None) -> str:
     return urljoin(f"{base}/", path.lstrip("./"))
 
 
-def _trading_panel_embed_html(*, origin: str | None = None) -> str:
-    """Inject built panel CSS/JS into ``#paopao-trading-panel`` when iframe cannot load."""
+def _trading_panel_embed_html(*, origin: str | None = None, min_height: int = 1600) -> str:
+    """Inject built panel CSS/JS into ``#paopao-trading-panel`` (default render path)."""
     html = TRADING_PANEL_INDEX.read_text(encoding="utf-8")
     base = origin or _trading_panel_origin()
-    chunks: list[str] = [
-        '<div id="paopao-trading-panel" style="width:100%;min-height:1200px;"></div>'
-    ]
+    chunks: list[str] = []
     for tag in re.findall(r"<link[^>]+>", html, flags=re.I):
         if "stylesheet" not in tag.lower():
             continue
@@ -280,6 +280,9 @@ def _trading_panel_embed_html(*, origin: str | None = None) -> str:
             continue
         abs_href = _absolute_static_asset_url(m.group(1), origin=base)
         chunks.append(f'<link rel="stylesheet" crossorigin href="{abs_href}">')
+    chunks.append(
+        f'<div id="paopao-trading-panel" style="width:100%;min-height:{min_height}px;"></div>'
+    )
     for tag in re.findall(r'<script[^>]+src=["\'][^"\']+["\'][^>]*>', html, flags=re.I):
         m = re.search(r'src=["\']([^"\']+)["\']', tag, flags=re.I)
         if not m:
@@ -291,17 +294,31 @@ def _trading_panel_embed_html(*, origin: str | None = None) -> str:
     return "\n".join(chunks)
 
 
-def _use_trading_panel_embed() -> bool:
-    if os.environ.get("PAOPAO_TRADING_PANEL_EMBED", "").strip() in ("1", "true", "yes"):
+def _use_trading_panel_iframe() -> bool:
+    """Opt-in iframe mode; inline embed is the default (iframe/static page often blank locally)."""
+    if os.environ.get("PAOPAO_TRADING_PANEL_IFRAME", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
         return True
-    if st.session_state.get("_paopao_trading_panel_embed"):
+    if st.session_state.get("_paopao_trading_panel_iframe"):
         return True
-    return st.query_params.get("panel_embed", "") == "1"
+    return st.query_params.get("panel_iframe", "") == "1"
+
+
+def _trading_panel_static_test_url() -> str:
+    return f"{_trading_panel_origin()}{TRADING_PANEL_STATIC_TEST_PATH}"
 
 
 def _trading_panel_static_diagnostics() -> list[str]:
     """Return human-readable issues when the built panel is missing or mis-linked."""
     issues: list[str] = []
+    test_file = TRADING_PANEL_DIR.parent / "test.txt"
+    if not test_file.is_file():
+        issues.append(
+            f"缺少 `{test_file.relative_to(TRADING_PANEL_DIR.parent.parent)}`（用于验证 enableStaticServing）。"
+        )
     if not TRADING_PANEL_INDEX.is_file():
         issues.append(
             f"缺少 `{TRADING_PANEL_INDEX.relative_to(TRADING_PANEL_DIR.parent.parent)}`"
@@ -355,33 +372,49 @@ def _render_trading_panel_iframe(panel_url: str, panel_height: int) -> None:
 def render_trading_panel(*, height: int | None = None) -> None:
     """嵌入 React 交易面板（需先 `cd frontend && npm run build`）。
 
-    Uses absolute ``/app/static/`` URLs (``enableStaticServing``). Falls back to
-    inline embed in ``#paopao-trading-panel`` when iframe mode is unavailable.
+    Default: inline embed via ``st.html`` loading ``/app/static/trading_panel/assets/*``
+    (``enableStaticServing``). Opt-in iframe: ``?panel_iframe=1`` or env
+    ``PAOPAO_TRADING_PANEL_IFRAME=1``.
     """
     panel_height = height if height is not None else _DEFAULT_TRADING_PANEL_HEIGHT
 
     panel_url = _trading_panel_iframe_src()
+    static_test_url = _trading_panel_static_test_url()
     issues = _trading_panel_static_diagnostics()
     if issues:
         st.error("交易面板静态资源异常，图表无法加载：\n\n" + "\n".join(f"- {x}" for x in issues))
         st.markdown(
             f"构建后应可通过 [静态面板]({panel_url}) 直接打开（需已部署且 `enableStaticServing = true`）。"
+            f" 先验证 [static/test.txt]({static_test_url}) 正文为 `{TRADING_PANEL_STATIC_TEST_MARKER}`；"
+            "若返回 Streamlit 壳页面而非该文本，请从仓库根目录重启 `streamlit run app.py`。"
         )
         st.code("cd frontend && npm install && npm run build", language="bash")
         return
 
-    if _use_trading_panel_embed():
-        st.html(_trading_panel_embed_html(), width="stretch")
+    if _use_trading_panel_iframe():
+        _render_trading_panel_iframe(panel_url, panel_height)
+        with st.expander("图表区域空白？"):
+            st.caption(
+                f"默认已改为内联嵌入。若 iframe 空白，去掉 `?panel_iframe=1` 或点击下面按钮。"
+                f" 也可先打开 [static/test.txt]({static_test_url}) 确认静态服务正常。"
+            )
+            if st.button("改用内联嵌入模式", key="paopao_panel_embed_btn"):
+                st.session_state.pop("_paopao_trading_panel_iframe", None)
+                st.rerun()
         return
 
-    _render_trading_panel_iframe(panel_url, panel_height)
+    st.html(
+        _trading_panel_embed_html(min_height=panel_height),
+        width="stretch",
+    )
 
-    with st.expander("图表区域空白？"):
+    with st.expander("高级：iframe / 静态页调试"):
         st.caption(
-            f"先在新标签页打开 [静态面板]({panel_url}) 确认资源可访问。"
-            "若静态页正常但 iframe 空白，可改用内联嵌入（避开 Streamlit #root 冲突）。"
+            f"[静态 index]({panel_url}) · [static/test.txt]({static_test_url})（应显示 "
+            f"`{TRADING_PANEL_STATIC_TEST_MARKER}`）。"
+            " 内联模式从同源加载 JS/CSS；若仍空白，请完全退出旧 Streamlit 进程后从本仓库根目录重新运行。"
         )
-        if st.button("改用内联嵌入模式", key="paopao_panel_embed_btn"):
-            st.session_state["_paopao_trading_panel_embed"] = True
+        if st.button("改用 iframe 模式", key="paopao_panel_iframe_btn"):
+            st.session_state["_paopao_trading_panel_iframe"] = True
             st.rerun()
 
