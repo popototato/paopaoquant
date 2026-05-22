@@ -1,6 +1,6 @@
 import streamlit as st
 
-from chart_component import render_trading_panel
+from chart_component import render_trading_panel, trading_panel_bundle_diagnostics
 from data import ETH_CSV_PATH, get_csv_info
 
 st.markdown(
@@ -32,4 +32,12 @@ else:
         "请通过顶部导航进入 **有限层级均值回归网格策略回测** 下载行情。"
     )
 
-render_trading_panel()
+panel_issues = trading_panel_bundle_diagnostics()
+if panel_issues:
+    st.error(
+        "交易面板无法加载，请重新构建前端：\n\n"
+        + "\n".join(f"- {issue}" for issue in panel_issues)
+    )
+    st.code("cd frontend && npm install && npm run build", language="bash")
+else:
+    render_trading_panel()

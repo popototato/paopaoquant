@@ -250,7 +250,7 @@ def _resolve_panel_bundle_paths() -> tuple[Path, Path]:
     return js_path, css_path
 
 
-def _trading_panel_bundle_diagnostics() -> list[str]:
+def trading_panel_bundle_diagnostics() -> list[str]:
     issues: list[str] = []
     js_path, css_path = _resolve_panel_bundle_paths()
     if not js_path.is_file():
@@ -267,8 +267,8 @@ def _trading_panel_bundle_diagnostics() -> list[str]:
 
 
 @st.cache_data(show_spinner=False)
-def _cached_inline_panel_html(min_height: int = _DEFAULT_TRADING_PANEL_HEIGHT) -> str:
-    """Read built IIFE bundle once per session; inline CSS+JS for ``st.html``."""
+def _cached_inline_panel_html_v2(min_height: int = _DEFAULT_TRADING_PANEL_HEIGHT) -> str:
+    """Read built IIFE bundle once per session; inline CSS+JS for ``components.html``."""
     js_path, css_path = _resolve_panel_bundle_paths()
     js_text = js_path.read_text(encoding="utf-8")
     css_text = css_path.read_text(encoding="utf-8") if css_path.is_file() else ""
@@ -284,8 +284,12 @@ def _cached_inline_panel_html(min_height: int = _DEFAULT_TRADING_PANEL_HEIGHT) -
     return "\n".join(parts)
 
 
+def _is_paopao_dev() -> bool:
+    return os.environ.get("PAOPAO_DEV", "").strip().lower() in ("1", "true", "yes")
+
+
 def _use_trading_panel_iframe() -> bool:
-    """Opt-in sandbox iframe; default is direct ``st.html`` inline embed."""
+    """Opt-in sandbox iframe; default is ``components.html`` inline embed."""
     return os.environ.get("PAOPAO_TRADING_PANEL_IFRAME", "").strip().lower() in (
         "1",
         "true",
@@ -294,13 +298,19 @@ def _use_trading_panel_iframe() -> bool:
 
 
 def _render_trading_panel_inline(*, panel_height: int) -> None:
-    st.html(_cached_inline_panel_html(min_height=panel_height), width="stretch")
+    if _is_paopao_dev():
+        st.caption("交易面板已加载（内联模式）")
+    components.html(
+        _cached_inline_panel_html_v2(min_height=panel_height),
+        height=panel_height,
+        scrolling=True,
+    )
 
 
 def _render_trading_panel_iframe(*, panel_height: int) -> None:
     """Same inline HTML inside a component iframe (env ``PAOPAO_TRADING_PANEL_IFRAME=1``)."""
     components.html(
-        _cached_inline_panel_html(min_height=panel_height),
+        _cached_inline_panel_html_v2(min_height=panel_height),
         height=panel_height,
         scrolling=True,
     )
@@ -309,11 +319,11 @@ def _render_trading_panel_iframe(*, panel_height: int) -> None:
 def render_trading_panel(*, height: int | None = None) -> None:
     """嵌入 React 交易面板（需先 `cd frontend && npm run build`）。
 
-    Default: IIFE ``panel.bundle.js`` + CSS inlined via ``st.html`` (no ``/app/static/``).
+    Default: IIFE ``panel.bundle.js`` + CSS inlined via ``components.html`` (scripts run).
     Optional: env ``PAOPAO_TRADING_PANEL_IFRAME=1`` for component iframe sandbox.
     """
     panel_height = height if height is not None else _DEFAULT_TRADING_PANEL_HEIGHT
-    issues = _trading_panel_bundle_diagnostics()
+    issues = trading_panel_bundle_diagnostics()
     if issues:
         st.error("交易面板构建产物异常：\n\n" + "\n".join(f"- {x}" for x in issues))
         st.code("cd frontend && npm install && npm run build", language="bash")
