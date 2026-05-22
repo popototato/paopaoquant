@@ -60,6 +60,24 @@ def parse_steps_csv_file(uploaded_file) -> pd.DataFrame:
     return parse_steps_text(text)
 
 
+def empty_steps_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=STEP_COLUMNS)
+
+
+def has_valid_steps(df: pd.DataFrame) -> bool:
+    if df is None or df.empty:
+        return False
+    cleaned = df.dropna(how="all")
+    if cleaned.empty:
+        return False
+    return cleaned[STEP_COLUMNS].notna().all(axis=1).any()
+
+
+def valid_steps_rows(df: pd.DataFrame) -> pd.DataFrame:
+    cleaned = df.dropna(how="all")
+    return cleaned.dropna(subset=STEP_COLUMNS, how="any")
+
+
 def default_steps_df() -> pd.DataFrame:
     # 每层仓位 ×0.85：与 OKX 实盘一致（0.1 ETH 模型单位 ≈ 0.085 ETH 实盘）
     return pd.DataFrame(

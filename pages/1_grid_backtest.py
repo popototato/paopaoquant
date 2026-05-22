@@ -13,7 +13,14 @@ from data import (
     update_eth_data,
 )
 from strategy import LayerStepConfig, create_strategy
-from strategy_import import default_steps_df, parse_steps_csv_file, parse_steps_text
+from strategy_import import (
+    default_steps_df,
+    empty_steps_df,
+    has_valid_steps,
+    parse_steps_csv_file,
+    parse_steps_text,
+    valid_steps_rows,
+)
 
 render_top_nav("pages/1_grid_backtest.py")
 
@@ -193,7 +200,15 @@ st.caption(
 )
 
 if "steps_data" not in st.session_state:
+    st.session_state.steps_data = empty_steps_df()
+
+if st.button(
+    "加载默认配置",
+    type="secondary",
+    help="25 层 OKX 实盘参数（每层仓位 ×0.85）",
+):
     st.session_state.steps_data = default_steps_df()
+    st.rerun()
 
 with st.expander("批量粘贴 / 导入 CSV", expanded=False):
     st.markdown(
@@ -256,9 +271,13 @@ if st.button("开始回测", type="primary"):
         st.error("请先刷新并加载行情数据。")
     elif backtest_end is not None and backtest_start > backtest_end:
         st.error("开始日期不能晚于结束日期。")
-    elif steps_df.empty:
-        st.error("请至少配置一步策略。")
+    elif not has_valid_steps(steps_df):
+        st.error(
+            "策略步骤表为空，请先导入 CSV、粘贴步骤，或在表格中手动填写至少一步；"
+            "也可点击「加载默认配置」使用 25 层 OKX 模板。"
+        )
     else:
+        filled = valid_steps_rows(steps_df)
         layers = [
             LayerStepConfig(
                 step=int(row["第几步"]),
@@ -266,7 +285,7 @@ if st.button("开始回测", type="primary"):
                 position_size=float(row["每层仓位"]),
                 take_profit_distance=float(row["止盈距离"]),
             )
-            for _, row in steps_df.iterrows()
+            for _, row in filled.iterrows()
         ]
         strategy = create_strategy(
             layers=layers,

@@ -45,6 +45,11 @@ import {
   formatChartTickMark,
 } from "../utils/timezone";
 import LiquidationZonePanel from "./liquidation/LiquidationZonePanel";
+import {
+  readSoundEnabled,
+  writeSoundEnabled,
+  signalSound,
+} from "../utils/signalSound";
 
 const CHART_OPTS = {
   layout: {
@@ -121,6 +126,11 @@ function mergeMarkers(...groups: TradeMarker[][]): TradeMarker[] {
   return groups.flat().sort((a, b) => a.time - b.time);
 }
 
+function nwSignalKey(marker: TradeMarker): string {
+  const side = marker.text === "Buy" ? "buy" : "sell";
+  return `${marker.time}-${side}`;
+}
+
 /** Main + sub chart heights; clamped for readability across viewports. */
 function getChartHeights() {
   if (typeof window === "undefined") {
@@ -185,6 +195,10 @@ export default function TradingPanel() {
   const [candles, setCandles] = useState<Candle[]>([]);
   const [lastPrice, setLastPrice] = useState<number | null>(null);
   const [live, setLive] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(readSoundEnabled);
+
+  const seenNwSignalsRef = useRef<Set<string>>(new Set());
+  const nwSignalsSeededRef = useRef(false);
 
   const destroyCharts = useCallback(() => {
     chartsRef.current.forEach((c) => c.remove());
@@ -219,6 +233,47 @@ export default function TradingPanel() {
       cancelled = true;
     };
   }, [symbol, interval]);
+
+  useEffect(() => {
+    seenNwSignalsRef.current = new Set();
+    nwSignalsSeededRef.current = false;
+  }, [symbol, interval]);
+
+  const toggleSound = useCallback(async () => {
+    if (!soundEnabled) {
+      await signalSound.unlock();
+      setSoundEnabled(true);
+      writeSoundEnabled(true);
+    } else {
+      setSoundEnabled(false);
+      writeSoundEnabled(false);
+    }
+  }, [soundEnabled]);
+
+  const handleNwSignalAlerts = useCallback(
+    (nwMarkers: TradeMarker[]) => {
+      if (!nwSignalsSeededRef.current) {
+        for (const m of nwMarkers) {
+          seenNwSignalsRef.current.add(nwSignalKey(m));
+        }
+        nwSignalsSeededRef.current = true;
+        return;
+      }
+
+      for (const m of nwMarkers) {
+        const key = nwSignalKey(m);
+        if (seenNwSignalsRef.current.has(key)) continue;
+        seenNwSignalsRef.current.add(key);
+        if (!soundEnabled) continue;
+        if (m.text === "Buy") signalSound.playBuy();
+        else signalSound.playSell();
+      }
+    },
+    [soundEnabled]
+  );
+
+  const handleNwSignalAlertsRef = useRef(handleNwSignalAlerts);
+  handleNwSignalAlertsRef.current = handleNwSignalAlerts;
 
   useEffect(() => {
     if (loading || error) return;
@@ -371,6 +426,13 @@ export default function TradingPanel() {
       nwLowerSeries,
     };
     bundleRef.current = bundle;
+    const luxNw = computeLuxNadarayaWatson(candles, bandwidth, alpha);
+    const nwMarkers = detectBuySellSignals(
+      candles,
+      luxNw.upper,
+      luxNw.lower
+    );
+    handleNwSignalAlertsRef.current(nwMarkers);
     applyChartData(bundle, candles, bandwidth, alpha);
 
     mainChart.timeScale().fitContent();
@@ -424,8 +486,16 @@ export default function TradingPanel() {
 
   useEffect(() => {
     if (!bundleRef.current || !candles.length || loading) return;
+
+    const luxNw = computeLuxNadarayaWatson(candles, bandwidth, alpha);
+    const nwMarkers = detectBuySellSignals(
+      candles,
+      luxNw.upper,
+      luxNw.lower
+    );
+    handleNwSignalAlerts(nwMarkers);
     applyChartData(bundleRef.current, candles, bandwidth, alpha);
-  }, [candles, loading, bandwidth, alpha]);
+  }, [candles, loading, bandwidth, alpha, handleNwSignalAlerts]);
 
   const first = candles[0];
   const last = candles[candles.length - 1];
@@ -446,7 +516,25 @@ export default function TradingPanel() {
             )}
             <span className="text-xs text-tv-muted">Binance 现货</span>
           </div>
-          <div className="flex items-center gap-4 text-sm">
+          <div className="flex items-center gap-3 text-sm">
+            <button
+              type="button"
+              aria-pressed={soundEnabled}
+              aria-label={
+                soundEnabled ? "关闭 NW 买卖声音提醒" : "开启 NW 买卖声音提醒"
+              }
+              title={
+                soundEnabled
+                  ? "NW Buy/Sell 新信号时播放提示音"
+                  : "点击开启提示音（需用户手势解锁浏览器音频）"
+              }
+              onClick={() => void toggleSound()}
+              className={`${SEGMENT_BASE} shrink-0 ${
+                soundEnabled ? SEGMENT_ACTIVE : SEGMENT_INACTIVE
+              }`}
+            >
+              {soundEnabled ? "声音开" : "声音关"}
+            </button>
             {lastPrice != null && (
               <span className="font-mono text-base font-semibold tabular-nums">
                 {formatPrice(lastPrice)}
@@ -562,22 +650,22 @@ export default function TradingPanel() {
       )}
 
       {!loading && !error && candles.length > 0 && (
-        <div className="flex w-full flex-col">
-          <div className="flex w-full shrink-0 flex-col px-2 pb-2">
-            <div className="relative shrink-0">
-              <div className="absolute left-3 top-1 z-10 text-xs font-medium text-tv-muted">
+        <div className="flex w-full flex-col scroll-mt-28">
+          <div className="flex w-full shrink-0 flex-col gap-1 px-2 pb-2 pt-2">
+            <div className="shrink-0">
+              <div className="px-1 pb-1 text-xs font-medium text-tv-muted">
                 主图 · K 线 + EMA + NW
               </div>
               <div ref={mainRef} className="w-full" />
             </div>
-            <div className="relative mt-1 shrink-0">
-              <div className="absolute left-3 top-0 z-10 text-xs font-medium text-tv-muted">
+            <div className="shrink-0">
+              <div className="px-1 pb-1 text-xs font-medium text-tv-muted">
                 RSI (14)
               </div>
               <div ref={rsiRef} className="w-full" />
             </div>
-            <div className="relative mt-1 shrink-0">
-              <div className="absolute left-3 top-0 z-10 text-xs font-medium text-tv-muted">
+            <div className="shrink-0">
+              <div className="px-1 pb-1 text-xs font-medium text-tv-muted">
                 MACD (12, 26, 9)
               </div>
               <div ref={macdRef} className="w-full" />

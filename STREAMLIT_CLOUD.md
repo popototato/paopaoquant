@@ -12,7 +12,7 @@ Vercel 仅适合静态交易面板预览，见 [DEPLOY.md](./DEPLOY.md)。
 | 项 | 状态 | 说明 |
 |----|------|------|
 | `.python-version` | 建议 `3.12` | 本地/CI 对齐；Cloud **部署时**在 Advanced settings 选 **3.12**（勿用 3.14） |
-| `requirements.txt` | 已包含 | `streamlit>=1.57,<1.58`、`backtrader`、`pandas`、`requests`、`altair` |
+| `requirements.txt` | 已包含 | `streamlit>=1.57,<1.58`（**勿**用 `>=1.28`，否则缺 `st.Page`）、`backtrader`、`pandas`、`numpy`、`requests`、`altair` |
 | `packages.txt` | 空文件即可 | 无额外系统依赖 |
 | 入口文件 | `app.py` | Cloud 里 **Main file path** 填 `app.py` |
 | `static/trading_panel/` | **已提交到 Git** | Cloud **默认不会**跑 `npm build`，需本地构建后 push |
@@ -208,6 +208,39 @@ cp .streamlit/secrets.toml.example .streamlit/secrets.toml
 ### 9. 日志提示 `replace st.components.v1.html with st.iframe`
 
 Streamlit 1.57+ 弃用 `st.components.v1.html`。本仓库 `chart_component.py` 已改用 `st.iframe`；推送后重建即可消除该警告。
+
+### 10. 日志里 `AttributeError: module 'streamlit' has no attribute 'Page'`
+
+**原因**：`app.py` 使用 `st.Page` / `st.navigation`（Streamlit **1.36+**），但 Cloud 仍按旧版 `requirements.txt`（例如 `streamlit>=1.28.0`）安装了 **1.32 或更早**，启动即崩溃，页面只显示 **「Oh no. Error running app」**。
+
+**修复**：
+
+1. 确认本地 `requirements.txt` 为 `streamlit>=1.57,<1.58`（或至少 `>=1.36.0`）。
+2. `git push` 到 Cloud 所跟踪的分支（如 `master`）。
+3. 在 **Manage app → Logs** 确认安装日志出现 `streamlit-1.57.x`。
+4. 必要时 **Reboot app**。
+
+`app.py` 在版本过低时会显示中文错误提示而非裸崩溃；若仍见 Oh no，以 Logs 堆栈为准。
+
+### 11. 依赖安装失败（`backtrader` / `numpy` / `altair`）
+
+在 Logs 的 **Installing dependencies** 阶段搜索 `ERROR`：
+
+- `No matching distribution`：检查 Cloud Python 版本（建议 **3.12**）。
+- `backtrader` 编译失败：极少见；可暂时在 Logs 确认是否完整安装 `backtrader-1.9.x`。
+- 缺 `numpy`：本仓库已在 `requirements.txt` 显式声明 `numpy>=1.24.0`（`pandas`/`altair` 的传递依赖有时在 Cloud 上未装上）。
+
+### 12. Cloud Logs 应重点看什么
+
+| 阶段 | 关键字 | 含义 |
+|------|--------|------|
+| 安装 | `Successfully installed streamlit-1.57` | 版本正确，支持 `st.Page` |
+| 安装 | `streamlit-1.3` 或 `1.32` | 版本过低，会触发 §10 |
+| 运行 | `AttributeError: ... Page` | 同 §10，需更新 `requirements.txt` 并 push |
+| 运行 | `ModuleNotFoundError` | 缺包，对照 `requirements.txt` 补全后 push |
+| 运行 | `keepalive ping timeout` | 首屏过重，见 §8；确认已 push 使用 `st.iframe` 的 `chart_component.py` |
+| 运行 | `FileNotFoundError` / `eth.csv` | 正常，进回测页下载即可 |
+| 运行 | `BinanceKlinesError` / `451` | 地区限制，见 §4 |
 
 ---
 

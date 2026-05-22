@@ -3,7 +3,10 @@ import type { Candle } from "../types";
 export type Symbol = "ETHUSDT" | "BTCUSDT";
 export type Interval = "1m" | "5m";
 
-const REST_BASE = "https://api.binance.com/api/v3/klines";
+const REST_BASES = [
+  "https://api.binance.com/api/v3/klines",
+  "https://data-api.binance.vision/api/v3/klines",
+] as const;
 const WS_BASE = "wss://stream.binance.com:9443/ws";
 
 export function symbolLabel(symbol: Symbol): string {
@@ -16,12 +19,25 @@ export async function fetchKlines(
   interval: Interval,
   limit = 1000
 ): Promise<Candle[]> {
-  const url = `${REST_BASE}?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Binance API ${res.status}: ${res.statusText}`);
+  const query = `symbol=${symbol}&interval=${interval}&limit=${limit}`;
+  let lastStatus = 0;
+  let lastText = "";
+  for (const base of REST_BASES) {
+    const res = await fetch(`${base}?${query}`);
+    if (res.ok) {
+      const raw: (string | number)[][] = await res.json();
+      return mapKlines(raw);
+    }
+    lastStatus = res.status;
+    lastText = res.statusText;
+    if (res.status !== 403 && res.status !== 451) {
+      break;
+    }
   }
-  const raw: (string | number)[][] = await res.json();
+  throw new Error(`Binance API ${lastStatus}: ${lastText}`);
+}
+
+function mapKlines(raw: (string | number)[][]): Candle[] {
   const candles: Candle[] = raw.map((row) => ({
     time: Math.floor(Number(row[0]) / 1000),
     open: parseFloat(String(row[1])),
