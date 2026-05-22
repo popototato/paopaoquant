@@ -1,12 +1,6 @@
 import streamlit as st
 
-from chart_component import (
-    TRADING_PANEL_STATIC_PATH,
-    _trading_panel_iframe_src,
-    _trading_panel_static_diagnostics,
-    _trading_panel_static_test_url,
-    render_trading_panel,
-)
+from chart_component import render_trading_panel
 from data import ETH_CSV_PATH, get_csv_info
 
 st.markdown(
@@ -38,20 +32,4 @@ else:
         "请通过顶部导航进入 **有限层级均值回归网格策略回测** 下载行情。"
     )
 
-panel_url = _trading_panel_iframe_src()
-static_test_url = _trading_panel_static_test_url()
-st.markdown(
-    f"**静态服务自检**（需 `.streamlit/config.toml` 中 `enableStaticServing = true`）："
-    f"[test.txt]({static_test_url}) · [交易面板 index]({panel_url})"
-)
-
-panel_issues = _trading_panel_static_diagnostics()
-if panel_issues:
-    st.error("首页图表依赖的静态交易面板未就绪：" + "；".join(panel_issues))
-    st.caption(
-        f"部署后请确认可访问：`{panel_url}` "
-        f"（路径 `{TRADING_PANEL_STATIC_PATH}`）。"
-        "本地修复：`cd frontend && npm run build`，然后提交 `static/trading_panel/`。"
-    )
-else:
-    render_trading_panel()
+render_trading_panel()

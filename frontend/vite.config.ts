@@ -1,18 +1,39 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-/** Streamlit Cloud static URL prefix (enableStaticServing). */
-const STREAMLIT_STATIC_BASE = "/app/static/trading_panel/";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const OUT_DIR = path.resolve(__dirname, "../static/trading_panel");
 
-export default defineConfig(({ mode }) => ({
-  plugins: [react()],
-  // Cloud iframe loads /app/static/trading_panel/index.html — assets must be absolute.
-  // Dev server: relative base. Override: VITE_BASE=./ npm run build
-  base:
-    process.env.VITE_BASE ??
-    (mode === "development" ? "./" : STREAMLIT_STATIC_BASE),
-  build: {
-    outDir: "../static/trading_panel",
-    emptyOutDir: true,
-  },
-}));
+export default defineConfig(({ mode }) => {
+  if (mode === "production") {
+    return {
+      plugins: [react()],
+      build: {
+        lib: {
+          entry: path.resolve(__dirname, "src/main.tsx"),
+          name: "PaopaoTradingPanel",
+          formats: ["iife"],
+          fileName: () => "panel.bundle.js",
+        },
+        cssCodeSplit: false,
+        outDir: OUT_DIR,
+        emptyOutDir: true,
+        rollupOptions: {
+          external: [],
+          output: {
+            inlineDynamicImports: true,
+            assetFileNames: (assetInfo) =>
+              assetInfo.name?.endsWith(".css") ? "panel.bundle.css" : "[name][extname]",
+          },
+        },
+      },
+    };
+  }
+
+  return {
+    plugins: [react()],
+    base: "./",
+  };
+});

@@ -5,11 +5,9 @@ from __future__ import annotations
 import csv
 import json
 import os
-import re
 from collections import deque
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urljoin
 from zoneinfo import ZoneInfo
 
 import streamlit as st
@@ -18,11 +16,8 @@ import streamlit.components.v1 as components
 from data import ETH_CSV_PATH, beijing_str_to_ms
 
 TRADING_PANEL_DIR = Path(__file__).resolve().parent / "static" / "trading_panel"
-TRADING_PANEL_INDEX = TRADING_PANEL_DIR / "index.html"
-TRADING_PANEL_ASSETS_DIR = TRADING_PANEL_DIR / "assets"
-TRADING_PANEL_STATIC_PATH = "/app/static/trading_panel/index.html"
-TRADING_PANEL_STATIC_TEST_PATH = "/app/static/test.txt"
-TRADING_PANEL_STATIC_TEST_MARKER = "STATIC_TEST_OK"
+TRADING_PANEL_BUNDLE_JS = TRADING_PANEL_DIR / "panel.bundle.js"
+TRADING_PANEL_BUNDLE_CSS = TRADING_PANEL_DIR / "panel.bundle.css"
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 LIGHTWEIGHT_CHARTS_CDN = (
@@ -226,195 +221,107 @@ def render_eth_candlestick_chart(
     st.html(html, width="stretch")
 
 
-# Default iframe height (px); browser loads JS via /app/static/ — no server-side inline
 _DEFAULT_TRADING_PANEL_HEIGHT = 1600
 
 
-def _streamlit_local_origin() -> str:
-    """When ``st.context.url`` is missing, build origin from Streamlit server config."""
-    try:
-        from streamlit.config import get_option
+def _resolve_panel_bundle_paths() -> tuple[Path, Path]:
+    """Return JS/CSS paths; prefer ``panel.bundle.*``, fall back to hashed legacy names."""
+    js_path = TRADING_PANEL_BUNDLE_JS
+    css_path = TRADING_PANEL_BUNDLE_CSS
 
-        port = int(get_option("server.port"))
-        address = str(get_option("server.address") or "localhost")
-        if address in ("0.0.0.0", "::", ""):
-            address = "localhost"
-        elif address == "::1":
-            address = "localhost"
-        return f"http://{address}:{port}"
-    except Exception:
-        return "http://localhost:8501"
+    if not js_path.is_file():
+        legacy_js = sorted(TRADING_PANEL_DIR.glob("index-*.js"))
+        if not legacy_js:
+            assets_dir = TRADING_PANEL_DIR / "assets"
+            if assets_dir.is_dir():
+                legacy_js = sorted(assets_dir.glob("index-*.js"))
+        if legacy_js:
+            js_path = legacy_js[0]
 
+    if not css_path.is_file():
+        legacy_css = sorted(TRADING_PANEL_DIR.glob("index-*.css"))
+        if not legacy_css:
+            assets_dir = TRADING_PANEL_DIR / "assets"
+            if assets_dir.is_dir():
+                legacy_css = sorted(assets_dir.glob("index-*.css"))
+        if legacy_css:
+            css_path = legacy_css[0]
 
-def _trading_panel_origin() -> str:
-    base_url = getattr(st.context, "url", None)
-    if base_url and base_url.startswith(("http://", "https://")):
-        return base_url.rstrip("/")
-    return _streamlit_local_origin().rstrip("/")
-
-
-def _trading_panel_iframe_src() -> str:
-    """Always return an absolute URL — relative ``/app/static/`` breaks ``st.iframe``."""
-    return f"{_trading_panel_origin()}{TRADING_PANEL_STATIC_PATH}"
+    return js_path, css_path
 
 
-def _absolute_static_asset_url(path: str, *, origin: str | None = None) -> str:
-    if path.startswith(("http://", "https://")):
-        return path
-    base = (origin or _trading_panel_origin()).rstrip("/")
-    if path.startswith("/"):
-        return f"{base}{path}"
-    return urljoin(f"{base}/", path.lstrip("./"))
-
-
-def _trading_panel_embed_html(*, origin: str | None = None, min_height: int = 1600) -> str:
-    """Inject built panel CSS/JS into ``#paopao-trading-panel`` (default render path)."""
-    html = TRADING_PANEL_INDEX.read_text(encoding="utf-8")
-    base = origin or _trading_panel_origin()
-    chunks: list[str] = []
-    for tag in re.findall(r"<link[^>]+>", html, flags=re.I):
-        if "stylesheet" not in tag.lower():
-            continue
-        m = re.search(r'href=["\']([^"\']+)["\']', tag, flags=re.I)
-        if not m:
-            continue
-        abs_href = _absolute_static_asset_url(m.group(1), origin=base)
-        chunks.append(f'<link rel="stylesheet" crossorigin href="{abs_href}">')
-    chunks.append(
-        f'<div id="paopao-trading-panel" style="width:100%;min-height:{min_height}px;"></div>'
-    )
-    for tag in re.findall(r'<script[^>]+src=["\'][^"\']+["\'][^>]*>', html, flags=re.I):
-        m = re.search(r'src=["\']([^"\']+)["\']', tag, flags=re.I)
-        if not m:
-            continue
-        abs_src = _absolute_static_asset_url(m.group(1), origin=base)
-        chunks.append(
-            f'<script type="module" crossorigin src="{abs_src}"></script>'
-        )
-    return "\n".join(chunks)
-
-
-def _use_trading_panel_iframe() -> bool:
-    """Opt-in iframe mode; inline embed is the default (iframe/static page often blank locally)."""
-    if os.environ.get("PAOPAO_TRADING_PANEL_IFRAME", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    ):
-        return True
-    if st.session_state.get("_paopao_trading_panel_iframe"):
-        return True
-    return st.query_params.get("panel_iframe", "") == "1"
-
-
-def _trading_panel_static_test_url() -> str:
-    return f"{_trading_panel_origin()}{TRADING_PANEL_STATIC_TEST_PATH}"
-
-
-def _trading_panel_static_diagnostics() -> list[str]:
-    """Return human-readable issues when the built panel is missing or mis-linked."""
+def _trading_panel_bundle_diagnostics() -> list[str]:
     issues: list[str] = []
-    test_file = TRADING_PANEL_DIR.parent / "test.txt"
-    if not test_file.is_file():
+    js_path, css_path = _resolve_panel_bundle_paths()
+    if not js_path.is_file():
         issues.append(
-            f"缺少 `{test_file.relative_to(TRADING_PANEL_DIR.parent.parent)}`（用于验证 enableStaticServing）。"
+            f"缺少 `{TRADING_PANEL_BUNDLE_JS.name}`（请在 `frontend` 目录执行 `npm run build`）。"
         )
-    if not TRADING_PANEL_INDEX.is_file():
+    elif js_path.stat().st_size < 10_000:
+        issues.append(f"`{js_path.name}` 体积异常偏小，请重新构建。")
+    if not css_path.is_file():
         issues.append(
-            f"缺少 `{TRADING_PANEL_INDEX.relative_to(TRADING_PANEL_DIR.parent.parent)}`"
+            f"缺少 `{TRADING_PANEL_BUNDLE_CSS.name}`（Vite 需 `cssCodeSplit: false`）。"
         )
-        return issues
-
-    html = TRADING_PANEL_INDEX.read_text(encoding="utf-8")
-    if 'src="./assets/' in html or 'href="./assets/' in html:
-        issues.append(
-            "index.html 仍使用相对路径 `./assets/`。"
-            "请在 `frontend` 目录执行 `npm run build`（生产 base 应为 `/app/static/trading_panel/`）。"
-        )
-
-    if not TRADING_PANEL_ASSETS_DIR.is_dir():
-        issues.append(f"缺少 assets 目录：`{TRADING_PANEL_ASSETS_DIR.name}/`")
-        return issues
-
-    asset_names = {p.name for p in TRADING_PANEL_ASSETS_DIR.iterdir() if p.is_file()}
-    for attr, prefix in (("src", "src="), ("href", "href=")):
-        marker = f'{attr}="/app/static/trading_panel/assets/'
-        if marker not in html and f'{attr}="./assets/' not in html:
-            continue
-        # Extract referenced bundle names from index.html
-        for part in html.split(prefix)[1:]:
-            if "/assets/" not in part:
-                continue
-            name = part.split("/assets/", 1)[1].split('"', 1)[0].strip()
-            if name and name not in asset_names:
-                issues.append(f"index.html 引用的资源不存在：`assets/{name}`")
-
     return issues
 
 
-def _render_trading_panel_iframe(panel_url: str, panel_height: int) -> None:
-    """Prefer ``st.iframe``; fall back to ``components.v1.iframe`` on failure."""
-    try:
-        st.iframe(
-            panel_url,
-            width="stretch",
-            height=panel_height,
-        )
-    except Exception:
-        components.iframe(
-            src=panel_url,
-            width=None,
-            height=panel_height,
-            scrolling=True,
-        )
+@st.cache_data(show_spinner=False)
+def _cached_inline_panel_html(min_height: int = _DEFAULT_TRADING_PANEL_HEIGHT) -> str:
+    """Read built IIFE bundle once per session; inline CSS+JS for ``st.html``."""
+    js_path, css_path = _resolve_panel_bundle_paths()
+    js_text = js_path.read_text(encoding="utf-8")
+    css_text = css_path.read_text(encoding="utf-8") if css_path.is_file() else ""
+    safe_css = css_text.replace("</style>", r"<\/style>")
+    safe_js = js_text.replace("</script>", r"<\/script>")
+    parts: list[str] = []
+    if safe_css.strip():
+        parts.append(f"<style>{safe_css}</style>")
+    parts.append(
+        f'<div id="paopao-trading-panel" style="width:100%;min-height:{min_height}px;"></div>'
+    )
+    parts.append(f"<script>{safe_js}</script>")
+    return "\n".join(parts)
+
+
+def _use_trading_panel_iframe() -> bool:
+    """Opt-in sandbox iframe; default is direct ``st.html`` inline embed."""
+    return os.environ.get("PAOPAO_TRADING_PANEL_IFRAME", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def _render_trading_panel_inline(*, panel_height: int) -> None:
+    st.html(_cached_inline_panel_html(min_height=panel_height), width="stretch")
+
+
+def _render_trading_panel_iframe(*, panel_height: int) -> None:
+    """Same inline HTML inside a component iframe (env ``PAOPAO_TRADING_PANEL_IFRAME=1``)."""
+    components.html(
+        _cached_inline_panel_html(min_height=panel_height),
+        height=panel_height,
+        scrolling=True,
+    )
 
 
 def render_trading_panel(*, height: int | None = None) -> None:
     """嵌入 React 交易面板（需先 `cd frontend && npm run build`）。
 
-    Default: inline embed via ``st.html`` loading ``/app/static/trading_panel/assets/*``
-    (``enableStaticServing``). Opt-in iframe: ``?panel_iframe=1`` or env
-    ``PAOPAO_TRADING_PANEL_IFRAME=1``.
+    Default: IIFE ``panel.bundle.js`` + CSS inlined via ``st.html`` (no ``/app/static/``).
+    Optional: env ``PAOPAO_TRADING_PANEL_IFRAME=1`` for component iframe sandbox.
     """
     panel_height = height if height is not None else _DEFAULT_TRADING_PANEL_HEIGHT
-
-    panel_url = _trading_panel_iframe_src()
-    static_test_url = _trading_panel_static_test_url()
-    issues = _trading_panel_static_diagnostics()
+    issues = _trading_panel_bundle_diagnostics()
     if issues:
-        st.error("交易面板静态资源异常，图表无法加载：\n\n" + "\n".join(f"- {x}" for x in issues))
-        st.markdown(
-            f"构建后应可通过 [静态面板]({panel_url}) 直接打开（需已部署且 `enableStaticServing = true`）。"
-            f" 先验证 [static/test.txt]({static_test_url}) 正文为 `{TRADING_PANEL_STATIC_TEST_MARKER}`；"
-            "若返回 Streamlit 壳页面而非该文本，请从仓库根目录重启 `streamlit run app.py`。"
-        )
+        st.error("交易面板构建产物异常：\n\n" + "\n".join(f"- {x}" for x in issues))
         st.code("cd frontend && npm install && npm run build", language="bash")
         return
 
     if _use_trading_panel_iframe():
-        _render_trading_panel_iframe(panel_url, panel_height)
-        with st.expander("图表区域空白？"):
-            st.caption(
-                f"默认已改为内联嵌入。若 iframe 空白，去掉 `?panel_iframe=1` 或点击下面按钮。"
-                f" 也可先打开 [static/test.txt]({static_test_url}) 确认静态服务正常。"
-            )
-            if st.button("改用内联嵌入模式", key="paopao_panel_embed_btn"):
-                st.session_state.pop("_paopao_trading_panel_iframe", None)
-                st.rerun()
+        _render_trading_panel_iframe(panel_height=panel_height)
         return
 
-    st.html(
-        _trading_panel_embed_html(min_height=panel_height),
-        width="stretch",
-    )
-
-    with st.expander("高级：iframe / 静态页调试"):
-        st.caption(
-            f"[静态 index]({panel_url}) · [static/test.txt]({static_test_url})（应显示 "
-            f"`{TRADING_PANEL_STATIC_TEST_MARKER}`）。"
-            " 内联模式从同源加载 JS/CSS；若仍空白，请完全退出旧 Streamlit 进程后从本仓库根目录重新运行。"
-        )
-        if st.button("改用 iframe 模式", key="paopao_panel_iframe_btn"):
-            st.session_state["_paopao_trading_panel_iframe"] = True
-            st.rerun()
+    _render_trading_panel_inline(panel_height=panel_height)
 
