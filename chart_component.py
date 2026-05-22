@@ -15,7 +15,7 @@ from data import ETH_CSV_PATH, beijing_str_to_ms
 
 TRADING_PANEL_DIR = Path(__file__).resolve().parent / "static" / "trading_panel"
 TRADING_PANEL_INDEX = TRADING_PANEL_DIR / "index.html"
-TRADING_PANEL_STATIC_URL = "/app/static/trading_panel/index.html"
+TRADING_PANEL_STATIC_PATH = "/app/static/trading_panel/index.html"
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 LIGHTWEIGHT_CHARTS_CDN = (
@@ -223,6 +223,14 @@ def render_eth_candlestick_chart(
 _DEFAULT_TRADING_PANEL_HEIGHT = 1600
 
 
+def _trading_panel_iframe_src() -> str:
+    """Cloud 上 iframe 需要绝对 URL；本地回退相对 static 路径。"""
+    base_url = getattr(st.context, "url", None)
+    if base_url and base_url.startswith(("http://", "https://")):
+        return f"{base_url.rstrip('/')}{TRADING_PANEL_STATIC_PATH}"
+    return TRADING_PANEL_STATIC_PATH
+
+
 def render_trading_panel(*, height: int | None = None) -> None:
     """嵌入 React 交易面板（需先 `cd frontend && npm run build`）。
 
@@ -239,7 +247,7 @@ def render_trading_panel(*, height: int | None = None) -> None:
         return
 
     st.iframe(
-        TRADING_PANEL_STATIC_URL,
+        _trading_panel_iframe_src(),
         width="stretch",
         height=panel_height,
     )
