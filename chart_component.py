@@ -18,7 +18,8 @@ TRADING_PANEL_DIR = Path(__file__).resolve().parent / "static" / "trading_panel"
 TRADING_PANEL_BUNDLE_JS = TRADING_PANEL_DIR / "panel.bundle.js"
 TRADING_PANEL_BUNDLE_CSS = TRADING_PANEL_DIR / "panel.bundle.css"
 TRADING_PANEL_INDEX_HTML = TRADING_PANEL_DIR / "index.html"
-TRADING_PANEL_STATIC_URL = "/app/static/trading_panel/index.html"
+TRADING_PANEL_STATIC_BASE = "/app/static/trading_panel/"
+TRADING_PANEL_STATIC_URL = f"{TRADING_PANEL_STATIC_BASE}index.html"
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 LIGHTWEIGHT_CHARTS_CDN = (
@@ -275,23 +276,31 @@ def _is_paopao_dev() -> bool:
     return os.environ.get("PAOPAO_DEV", "").strip().lower() in ("1", "true", "yes")
 
 
+def _trading_panel_srcdoc() -> str:
+    """Build iframe HTML with absolute bundle URLs (srcdoc base is app root, not /app/static/)."""
+    html = TRADING_PANEL_INDEX_HTML.read_text(encoding="utf-8")
+    base = TRADING_PANEL_STATIC_BASE
+    if f'href="{base}' not in html:
+        html = (
+            html.replace('href="panel.bundle.css"', f'href="{base}panel.bundle.css"')
+            .replace('src="panel.bundle.js"', f'src="{base}panel.bundle.js"')
+        )
+    return html
+
+
 def _render_trading_panel_static(*, panel_height: int) -> None:
-    """Load IIFE bundle via ``st.iframe`` + ``enableStaticServing`` (local + Cloud)."""
+    """Embed panel via ``st.iframe`` srcdoc; bundles load from ``enableStaticServing`` paths."""
     if _is_paopao_dev():
-        st.caption(f"交易面板已加载（`{TRADING_PANEL_STATIC_URL}`）")
-    st.iframe(
-        TRADING_PANEL_STATIC_URL,
-        width="stretch",
-        height=panel_height,
-    )
+        st.caption(f"交易面板已加载（bundles: `{TRADING_PANEL_STATIC_BASE}`）")
+    st.iframe(_trading_panel_srcdoc(), width="stretch", height=panel_height)
 
 
 def render_trading_panel(*, height: int | None = None) -> None:
     """嵌入 React 交易面板（需先 `cd frontend && npm run build`）。
 
-    Serves ``static/trading_panel/index.html`` via ``st.iframe`` and Streamlit static
-    hosting (``.streamlit/config.toml`` → ``enableStaticServing = true``). Avoids
-    inlining ~800KB JS into ``components.html`` srcdoc, which often renders blank.
+    Embeds ``index.html`` via ``st.iframe`` srcdoc; JS/CSS load from ``/app/static/trading_panel/``
+    (``.streamlit/config.toml`` → ``enableStaticServing = true``). Avoids nesting the static
+    HTML URL in an iframe (often shows an iframe error on Streamlit Cloud).
     """
     panel_height = height if height is not None else _DEFAULT_TRADING_PANEL_HEIGHT
     issues = trading_panel_bundle_diagnostics()

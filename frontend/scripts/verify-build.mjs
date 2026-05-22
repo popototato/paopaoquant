@@ -16,11 +16,11 @@ const indexHtml = `<!doctype html>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>泡泡量化 · 交易面板</title>
-    <link rel="stylesheet" href="panel.bundle.css" />
+    <link rel="stylesheet" href="/app/static/trading_panel/panel.bundle.css" />
   </head>
   <body>
     <div id="paopao-trading-panel" style="width: 100%; min-height: 700px"></div>
-    <script src="panel.bundle.js"></script>
+    <script src="/app/static/trading_panel/panel.bundle.js"></script>
   </body>
 </html>
 `;
