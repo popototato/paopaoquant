@@ -1,0 +1,9 @@
+# Force dark theme app-wide (home + backtest) — avoids OS/light Streamlit defaults.
+# Palette aligned with app.py / backtest_page.py (#131722 / #1e222d).
+[theme]
+base = "dark"
+primaryColor = "#2962ff"
+backgroundColor = "#131722"
+secondaryBackgroundColor = "#1e222d"
+textColor = "#d1d4dc"
+font = "sans serif"

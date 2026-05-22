@@ -1,9 +1,13 @@
+frontend/node_modules/
+frontend/dist/
+
 __pycache__/
 *.pyc
 .Python
 .venv/
 venv/
 .env
+.streamlit/secrets.toml
 *.log
 download.log
 eth.csv

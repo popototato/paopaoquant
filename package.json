@@ -1,0 +1,9 @@
+{
+  "name": "paopaoquant",
+  "private": true,
+  "version": "1.0.0",
+  "description": "泡泡量化 — Vercel 部署 React 交易面板静态预览（非 Streamlit 服务端）",
+  "scripts": {
+    "build": "cd frontend && npm run build"
+  }
+}
